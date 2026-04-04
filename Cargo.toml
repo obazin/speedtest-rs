@@ -1,0 +1,13 @@
+[package]
+name = "speedtest-rs"
+version = "0.1.0"
+edition = "2024"
+description = "Minimal bandwidth test CLI — download & upload via Cloudflare"
+
+[dependencies]
+reqwest = { version = "0.13", features = ["rustls", "stream"] }
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }
+indicatif = "0.18"
+futures-util = "0.3"
+rand = "0.10"
