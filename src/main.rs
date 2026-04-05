@@ -252,6 +252,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     max / 1_000_000.0,
                     min / 1_000_000.0,
                 );
+                println!();
             }
         }
     }
