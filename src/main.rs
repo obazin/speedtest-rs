@@ -176,25 +176,13 @@ async fn upload_test(
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// Latency rounds
 // ---------------------------------------------------------------------------
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
-
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(120))
-        .build()?;
-
-    println!();
-    println!("  speedtest-rs — bandwidth test via Cloudflare");
-    println!("  ──────────────────────────────────");
-
-    // -- Latency --
+async fn run_latency(client: &reqwest::Client) {
     let mut latencies = Vec::new();
     for _ in 0..5 {
-        match measure_latency(&client).await {
+        match measure_latency(client).await {
             Ok(d) => latencies.push(d),
             Err(e) => {
                 eprintln!("  ✗ latency probe failed: {e}");
@@ -211,94 +199,116 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             min.as_secs_f64() * 1000.0,
         );
     }
+}
 
-    // -- Download --
-    if !cli.no_download {
-        let size = cli.download_mb * 1_000_000;
-        let mut speeds: Vec<f64> = Vec::new();
+// ---------------------------------------------------------------------------
+// Bandwidth summary
+// ---------------------------------------------------------------------------
 
-        for round in 0..cli.rounds {
-            match download_test(&client, size).await {
-                Ok((bytes, elapsed)) => {
-                    let bps = (bytes as f64 * 8.0) / elapsed.as_secs_f64();
-                    if cli.rounds > 1 {
-                        println!(
-                            "  ↓ round {}/{}   {:.2} Mbps",
-                            round + 1,
-                            cli.rounds,
-                            bps / 1_000_000.0
-                        );
-                    }
-                    speeds.push(bps);
+fn print_summary(speeds: &[f64], size: u64, arrow: &str, direction: &str) {
+    if speeds.is_empty() {
+        return;
+    }
+    let avg_duration = Duration::from_secs_f64(
+        (size as f64 * 8.0 * speeds.len() as f64) / speeds.iter().sum::<f64>(),
+    );
+    println!(
+        "  {arrow} {direction:<11} {}  ({})",
+        format_speed(size, avg_duration),
+        format_size(size),
+    );
+    if speeds.len() > 1 {
+        let max = speeds.iter().cloned().fold(f64::MIN, f64::max);
+        let min = speeds.iter().cloned().fold(f64::MAX, f64::min);
+        println!(
+            "                best {:.2} Mbps / worst {:.2} Mbps",
+            max / 1_000_000.0,
+            min / 1_000_000.0,
+        );
+        println!();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Download rounds
+// ---------------------------------------------------------------------------
+
+async fn run_download(client: &reqwest::Client, size: u64, rounds: u32) {
+    let mut speeds: Vec<f64> = Vec::new();
+
+    for round in 0..rounds {
+        match download_test(client, size).await {
+            Ok((bytes, elapsed)) => {
+                let bps = (bytes as f64 * 8.0) / elapsed.as_secs_f64();
+                if rounds > 1 {
+                    println!(
+                        "  ↓ round {}/{}   {:.2} Mbps",
+                        round + 1,
+                        rounds,
+                        bps / 1_000_000.0
+                    );
                 }
-                Err(e) => eprintln!("  ✗ download round {} failed: {e}", round + 1),
+                speeds.push(bps);
             }
-        }
-
-        if !speeds.is_empty() {
-            let avg_duration = Duration::from_secs_f64(
-                (size as f64 * 8.0 * speeds.len() as f64) / speeds.iter().sum::<f64>(),
-            );
-            println!(
-                "  ↓ download    {}  ({})",
-                format_speed(size, avg_duration),
-                format_size(size),
-            );
-            if speeds.len() > 1 {
-                let max = speeds.iter().cloned().fold(f64::MIN, f64::max);
-                let min = speeds.iter().cloned().fold(f64::MAX, f64::min);
-                println!(
-                    "                best {:.2} Mbps / worst {:.2} Mbps",
-                    max / 1_000_000.0,
-                    min / 1_000_000.0,
-                );
-                println!();
-            }
+            Err(e) => eprintln!("  ✗ download round {} failed: {e}", round + 1),
         }
     }
 
-    // -- Upload --
-    if !cli.no_upload {
-        let size = cli.upload_mb * 1_000_000;
-        let mut speeds: Vec<f64> = Vec::new();
+    print_summary(&speeds, size, "↓", "download");
+}
 
-        for round in 0..cli.rounds {
-            match upload_test(&client, size).await {
-                Ok((bytes, elapsed)) => {
-                    let bps = (bytes as f64 * 8.0) / elapsed.as_secs_f64();
-                    if cli.rounds > 1 {
-                        println!(
-                            "  ↑ round {}/{}   {:.2} Mbps",
-                            round + 1,
-                            cli.rounds,
-                            bps / 1_000_000.0
-                        );
-                    }
-                    speeds.push(bps);
+// ---------------------------------------------------------------------------
+// Upload rounds
+// ---------------------------------------------------------------------------
+
+async fn run_upload(client: &reqwest::Client, size: u64, rounds: u32) {
+    let mut speeds: Vec<f64> = Vec::new();
+
+    for round in 0..rounds {
+        match upload_test(client, size).await {
+            Ok((bytes, elapsed)) => {
+                let bps = (bytes as f64 * 8.0) / elapsed.as_secs_f64();
+                if rounds > 1 {
+                    println!(
+                        "  ↑ round {}/{}   {:.2} Mbps",
+                        round + 1,
+                        rounds,
+                        bps / 1_000_000.0
+                    );
                 }
-                Err(e) => eprintln!("  ✗ upload round {} failed: {e}", round + 1),
+                speeds.push(bps);
             }
+            Err(e) => eprintln!("  ✗ upload round {} failed: {e}", round + 1),
         }
+    }
 
-        if !speeds.is_empty() {
-            let avg_duration = Duration::from_secs_f64(
-                (size as f64 * 8.0 * speeds.len() as f64) / speeds.iter().sum::<f64>(),
-            );
-            println!(
-                "  ↑ upload      {}  ({})",
-                format_speed(size, avg_duration),
-                format_size(size),
-            );
-            if speeds.len() > 1 {
-                let max = speeds.iter().cloned().fold(f64::MIN, f64::max);
-                let min = speeds.iter().cloned().fold(f64::MAX, f64::min);
-                println!(
-                    "                best {:.2} Mbps / worst {:.2} Mbps",
-                    max / 1_000_000.0,
-                    min / 1_000_000.0,
-                );
-            }
-        }
+    print_summary(&speeds, size, "↑", "upload");
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()?;
+
+    println!();
+    println!("  speedtest-rs — bandwidth test via Cloudflare");
+    println!("  ──────────────────────────────────");
+
+    run_latency(&client).await;
+
+    if !cli.no_download {
+        run_download(&client, cli.download_mb * 1_000_000, cli.rounds).await;
+    }
+
+    if !cli.no_upload {
+        run_upload(&client, cli.upload_mb * 1_000_000, cli.rounds).await;
     }
 
     println!();
